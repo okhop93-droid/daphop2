@@ -1,96 +1,111 @@
 import asyncio, random, re, os
+from datetime import datetime
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from flask import Flask
 from threading import Thread
 
-# ====== CẤU HÌNH ======
-API_ID = 36437338
-API_HASH = '18d34c7efc396d277f3db62baa078efc'
-BOT_TOKEN = '8492633588:AAGSoL3wMHq8HOD2llLmbp6gdfaAwOqjJvo'
+# ================== CONFIG ==================
+API_ID = int(os.getenv("API_ID", "36437338"))
+API_HASH = os.getenv("API_HASH", "API_HASH_HERE")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "BOT_TOKEN_HERE")
 
-GAME_BOT = 'xocdia88_bot_uytin_bot'
-LOG_GROUP = -1002984339626
-SESSION_FILE = 'sessions.txt'
+BOT_GAME = "xocdia88_bot_uytin_bot"
+GR_LOG = -1002984339626
+SESSION_FILE = "database_sessions.txt"
+# ============================================
 
-# ====== WEB KEEP ALIVE ======
+# ================== WEB KEEP ALIVE ==================
 app = Flask(__name__)
-@app.route('/')
+@app.route("/")
 def home():
     return "SYSTEM ONLINE"
 
-Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
+def run_web():
+    app.run(host="0.0.0.0", port=8080)
 
-# ====== BIẾN HỆ THỐNG ======
-clients = {}
-pending_login = {}
+# ================== GLOBAL ==================
+active_clients = {}
+pending_auth = {}
 recent_codes = set()
-total_codes = 0
+stat_counter = 0
 
-# ====== LƯU SESSION ======
-def save_session(s):
-    if not os.path.exists(SESSION_FILE):
-        open(SESSION_FILE, 'w').close()
-    with open(SESSION_FILE, 'r+') as f:
-        if s not in f.read():
-            f.write(s + '\n')
+# ================== UTILS ==================
+def is_sleep_time():
+    h = datetime.now().hour
+    return 2 <= h < 6
 
-# ====== LOGIC ĐẬP HỘP AN TOÀN ======
-async def auto_grab(client, name, admin_bot):
-    delay_min = random.randint(3, 6)
-    delay_max = random.randint(10, 15)
+def save_session(sess):
+    with open(SESSION_FILE, "a+") as f:
+        f.seek(0)
+        if sess not in f.read():
+            f.write(sess + "\n")
 
-    @client.on(events.NewMessage(chats=GAME_BOT))
-    async def handler(e):
-        if not e.reply_markup:
+# ================== AUTO GRAB ==================
+async def start_grabbing(client, acc_name, admin_bot):
+    global stat_counter
+
+    @client.on(events.NewMessage(chats=BOT_GAME))
+    async def grab(ev):
+        if is_sleep_time():
             return
 
-        for row in e.reply_markup.rows:
-            for btn in row.buttons:
-                if any(x in btn.text.lower() for x in ['đập', 'hộp', 'mở']):
-                    wait = random.uniform(delay_min, delay_max)
-                    await asyncio.sleep(wait)
+        if not ev.reply_markup:
+            return
 
-                    try:
-                        await e.click(btn)
-                        await asyncio.sleep(1)
+        btn = next(
+            (
+                b for r in ev.reply_markup.rows
+                for b in r.buttons
+                if any(x in (b.text or "").lower() for x in ["đập", "hộp", "mở"])
+            ),
+            None
+        )
 
-                        msg = (await client.get_messages(GAME_BOT, limit=1))[0]
-                        if not msg.message:
-                            return
+        if not btn:
+            return
 
-                        m = re.search(r'[A-Z0-9]{8,15}', msg.message)
-                        if not m:
-                            return
+        await asyncio.sleep(random.uniform(3, 8))
 
-                        code = m.group()
-                        if code in recent_codes:
-                            return
+        try:
+            await ev.click()
+            await asyncio.sleep(1.5)
 
-                        recent_codes.add(code)
-                        global total_codes
-                        total_codes += 1
+            msg = (await client.get_messages(BOT_GAME, limit=1))[0]
+            if not msg.message:
+                return
 
-                        await admin_bot.send_message(
-                            LOG_GROUP,
-                            f"🎁 HÚP MÃ\n"
-                            f"👤 Acc: {name}\n"
-                            f"⏱ Delay: {round(wait,1)}s\n"
-                            f"📩 Code: `{code}`"
-                        )
+            m = re.search(r"[A-Z0-9]{8,15}", msg.message)
+            if not m:
+                return
 
-                        await asyncio.sleep(60)
-                        recent_codes.discard(code)
+            code = m.group()
+            if code in recent_codes:
+                return
 
-                    except:
-                        pass
+            recent_codes.add(code)
+            stat_counter += 1
 
-# ====== MAIN ======
+            await admin_bot.send_message(
+                GR_LOG,
+                f"🎁 **MỞ HỘP THÀNH CÔNG**\n"
+                f"👤 Acc: `{acc_name}`\n"
+                f"📩 Mã: `{code}`\n"
+                f"📊 Tổng: `{stat_counter}`"
+            )
+
+            await asyncio.sleep(60)
+            recent_codes.discard(code)
+
+        except:
+            pass
+
+# ================== MAIN ==================
 async def main():
-    admin = TelegramClient('admin', API_ID, API_HASH)
-    await admin.start(bot_token=BOT_TOKEN)
+    admin_bot = TelegramClient("admin", API_ID, API_HASH)
+    await admin_bot.start(bot_token=BOT_TOKEN)
 
-    # HỒI SINH SESSION
+    # Hồi sinh acc
     if os.path.exists(SESSION_FILE):
         for s in open(SESSION_FILE).read().splitlines():
             try:
@@ -98,74 +113,73 @@ async def main():
                 await c.connect()
                 if await c.is_user_authorized():
                     me = await c.get_me()
-                    clients[me.id] = c
-                    asyncio.create_task(auto_grab(c, me.first_name, admin))
+                    active_clients[me.id] = c
+                    asyncio.create_task(start_grabbing(c, me.first_name, admin_bot))
             except:
                 pass
 
+    # ================== UI ==================
     def menu():
         return [
-            [Button.inline("➕ Thêm acc", b"add")],
-            [Button.inline("📑 Acc đang chạy", b"list")],
-            [Button.inline("📊 Thống kê", b"stat")]
+            [Button.inline("➕ Nạp Acc", b"add"), Button.inline("📑 Acc Online", b"list")],
+            [Button.inline("📊 Thống kê", b"stats")]
         ]
 
-    @admin.on(events.NewMessage(pattern='/start'))
+    @admin_bot.on(events.NewMessage(pattern="/start"))
     async def start(e):
         await e.respond(
-            f"🤖 BOT ĐẬP HỘP\n"
-            f"👥 Acc: {len(clients)}\n"
-            f"🎁 Tổng mã: {total_codes}",
+            f"💎 **BOT MỞ HỘP**\n"
+            f"📦 Acc online: `{len(active_clients)}`\n"
+            f"🎁 Tổng mã: `{stat_counter}`",
             buttons=menu()
         )
 
-    @admin.on(events.CallbackQuery)
+    @admin_bot.on(events.CallbackQuery)
     async def cb(e):
-        if e.data == b'list':
-            text = "📑 ACC ONLINE:\n"
-            for i, c in enumerate(clients.values(), 1):
+        if e.data == b"list":
+            txt = "📑 **ACC ONLINE**\n"
+            for i, c in enumerate(active_clients.values(), 1):
                 me = await c.get_me()
-                text += f"{i}. {me.first_name}\n"
-            await e.edit(text, buttons=menu())
+                txt += f"{i}. `{me.first_name}`\n"
+            await e.edit(txt, buttons=menu())
 
-        if e.data == b'stat':
+        elif e.data == b"stats":
             await e.edit(
-                f"📊 THỐNG KÊ\n"
-                f"👥 Acc: {len(clients)}\n"
-                f"🎁 Mã: {total_codes}",
+                f"📊 **THỐNG KÊ**\n"
+                f"🎁 Mã: `{stat_counter}`\n"
+                f"📦 Acc: `{len(active_clients)}`",
                 buttons=menu()
             )
 
-        if e.data == b'add':
-            await e.edit(
-                "📱 Thêm acc\n"
-                "Gõ: `/login 84xxxx`",
-                buttons=menu()
-            )
+        elif e.data == b"add":
+            await e.edit("Gửi: `/login 84xxxxxxxxx`")
 
-    @admin.on(events.NewMessage(pattern='/login'))
+    # ================== LOGIN ==================
+    @admin_bot.on(events.NewMessage(pattern="/login"))
     async def login(e):
-        phone = ''.join(filter(str.isdigit, e.text))
+        phone = "".join(filter(str.isdigit, e.text))
         c = TelegramClient(StringSession(), API_ID, API_HASH)
         await c.connect()
-        sent = await c.send_code_request(phone)
-        pending_login[e.sender_id] = (c, phone, sent.phone_code_hash)
-        await e.reply("📩 Nhập OTP: `/otp 12345`")
+        r = await c.send_code_request(phone)
+        pending_auth[e.sender_id] = (c, phone, r.phone_code_hash)
+        await e.respond("📩 Nhập: `/otp 12345`")
 
-    @admin.on(events.NewMessage(pattern='/otp'))
+    @admin_bot.on(events.NewMessage(pattern="/otp"))
     async def otp(e):
-        if e.sender_id not in pending_login:
+        if e.sender_id not in pending_auth:
             return
-        c, phone, h = pending_login[e.sender_id]
-        code = ''.join(filter(str.isdigit, e.text))
+        c, phone, h = pending_auth.pop(e.sender_id)
+        code = "".join(filter(str.isdigit, e.text))
         await c.sign_in(phone, code, phone_code_hash=h)
-
         save_session(c.session.save())
         me = await c.get_me()
-        clients[me.id] = c
-        asyncio.create_task(auto_grab(c, me.first_name, admin))
-        await e.reply(f"✅ Đã thêm acc {me.first_name}")
+        active_clients[me.id] = c
+        asyncio.create_task(start_grabbing(c, me.first_name, admin_bot))
+        await e.respond(f"✅ `{me.first_name}` đã online")
 
-    await admin.run_until_disconnected()
+    await admin_bot.run_until_disconnected()
 
-asyncio.run(main())
+# ================== RUN ==================
+if __name__ == "__main__":
+    Thread(target=run_web).start()
+    asyncio.run(main())
