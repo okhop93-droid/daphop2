@@ -6,7 +6,7 @@ from telethon.sessions import StringSession
 # ---------------- CONFIG ----------------
 API_ID = 36437338
 API_HASH = '18d34c7efc396d277f3db62baa078efc'
-BOT_TOKEN = '8028025981:AAGJNsyU1NoN1YFTeSHmPA0aXEFDeOnCN4M'
+BOT_TOKEN = '8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E'
 TARGET_BOT = 'xocdia88_bot_uytin_bot'
 GR_LOG = -1001234567890  # group log admin
 
