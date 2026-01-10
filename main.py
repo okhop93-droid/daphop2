@@ -1,47 +1,50 @@
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-import asyncio, random, datetime
-from flask import Flask
-from threading import Thread
+import asyncio
 
 # --- CẤU HÌNH ---
 API_ID = 36437338
 API_HASH = '18d34c7efc396d277f3db62baa078efc'
-BOT = 'xocdia88_bot_uytin_bot'
-GR_LOG = -1002984339626 
+BOT_TOKEN = '8492633588:AAGSoL3wMHq8HOD2llLmbp6gdfaAwOqjJvo' # Token bot của bạn
 
-# CHỈ GIỮ LẠI ACC 8 (NGUYỄN THANH) - ACC SỐNG DUY NHẤT
-SESSION_ACC8 = '1BVtsOGcBu5WplDJSVRn8EYslTyiYpN7-V12ICXB1BTgp7nFs5n6-AQC-Xq7hBPi1D4Q1oZJlaCzxfSSqfe2xYRt24KGquwMu4sr1UwA9--QNaG9jjvEbt-T1MnrjfifVK_1fSn8kB08l-5DegwyTxMFLQ9SehsYU_cTG4wHfE_OGgQzU5VSELO7Vi7V1PRG0v2VmZ6pu-ec96jRTeFROrQOIN0VZIyVrjIIp68oBWiXidNnWrV8RMKO9dVRdnj6vQtl5E7_Pa6pR51RyM2IN-BSn78lDVlpT2vkOS4yV6kF8Y3pE-MtgJv56amDM4kl3Ib-5tf4-4uy4fCcc8SBXsmbccTnngks='
+# Bot chính dùng Token để nhận lệnh
+bot = TelegramClient('bot_manager', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
-app = Flask('')
-@app.route('/')
-def home(): return "ACC_8_ONLY_STABLE"
+# Bộ nhớ tạm lưu các bước đăng nhập
+login_steps = {}
 
-async def main():
-    Thread(target=lambda: app.run(host='0.0.0.0', port=8080)).start()
-    print("🚀 ĐANG CHẠY ACC 8 (NGUYỄN THANH) - HY VỌNG CUỐI CÙNG...", flush=True)
+@bot.on(events.NewMessage(pattern='/start'))
+async def start(e):
+    await e.reply("👋 Tôi là Bot Quản Lý Session Vĩnh Viễn.\nSử dụng lệnh: `/login [số_điện_thoại]` để bắt đầu.")
+
+@bot.on(events.NewMessage(pattern='/login'))
+async def login(e):
+    phone = e.text.split(' ')[1]
+    client = TelegramClient(StringSession(), API_ID, API_HASH)
+    await client.connect()
     
-    try:
-        client = TelegramClient(StringSession(SESSION_ACC8), API_ID, API_HASH)
-        await client.start()
-        await client.send_message(GR_LOG, "🔔 [HỆ THỐNG] Nguyễn Thanh (Acc 8) đã lên sóng thành công!")
-        print("✅ ACC 8 ONLINE!", flush=True)
-
-        @client.on(events.NewMessage(chats=BOT))
-        async def work(e):
-            if e.reply_markup:
-                for row in e.reply_markup.rows:
-                    for btn in row.buttons:
-                        if any(x in btn.text for x in ["Đập", "Hộp", "Mở"]):
-                            await asyncio.sleep(random.uniform(0.1, 0.4))
-                            try:
-                                await e.click()
-                                await client.send_message(GR_LOG, "💰 [ACC 8] Nguyễn Thanh húp quà thành công!")
-                            except: pass
-        await client.run_until_disconnected()
-    except Exception as e:
-        print(f"❌ LỖI NGHIÊM TRỌNG: {e}", flush=True)
-
-if __name__ == '__main__':
-    asyncio.run(main())
+    # Gửi mã xác nhận về Telegram của số điện thoại đó
+    sent = await client.send_code_request(phone)
+    login_steps[e.sender_id] = {'phone': phone, 'hash': sent.phone_code_hash, 'client': client}
     
+    await e.reply(f"📩 Đã gửi mã xác nhận đến `{phone}`. Hãy phản hồi tin nhắn này bằng mã OTP (ví dụ: 12345).")
+
+@bot.on(events.NewMessage)
+async def handle_otp(e):
+    if e.sender_id in login_steps and e.text.isdigit():
+        data = login_steps[e.sender_id]
+        client = data['client']
+        try:
+            # Thực hiện đăng nhập
+            await client.sign_in(data['phone'], e.text, phone_code_hash=data['hash'])
+            
+            # LẤY SESSION VĨNH VIỄN
+            session_str = client.session.save()
+            
+            await e.reply(f"✅ Đăng nhập thành công!\n\n**Mã Session mới của bạn:**\n`{session_str}`\n\nLưu mã này vào code đập hộp để chạy.")
+            del login_steps[e.sender_id]
+        except Exception as ex:
+            await e.reply(f"❌ Lỗi: {str(ex)}")
+
+print("🤖 Bot quản lý đang chạy...")
+bot.run_until_disconnected()
