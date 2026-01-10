@@ -14,6 +14,7 @@ SESSIONS_FILE = "sessions.json"
 MAX_BOX_PER_DAY = 50
 CHECK_INTERVAL = 600      # 10 phút
 BACKUP_INTERVAL = 3600    # 1 giờ
+TEST_INTERVAL = 3600      # 1 giờ
 
 ACTIVE_HOURS = [(7, 9.5), (11, 14.5), (19, 24)]
 SLEEP_HOURS = (2, 6)
@@ -45,13 +46,33 @@ def log_event(acc_name, event_type, extra=""):
     with open("data/log.txt", "a", encoding="utf-8") as f:
         f.write(f"{datetime.now()} | {acc_name} | {event_type} | {extra}\n")
 
+async def send_group_log(bot_admin, message):
+    try:
+        await bot_admin.send_message(GR_LOG, message)
+    except:
+        pass
+
+# ---------------- SESSIONS -----------------
 def load_accounts():
     if not os.path.exists(SESSIONS_FILE):
+        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+            f.write("[]")
         return []
-    return json.load(open(SESSIONS_FILE, "r", encoding="utf-8"))
+    try:
+        with open(SESSIONS_FILE, "r", encoding="utf-8") as f:
+            data = f.read().strip()
+            if not data:
+                return []
+            return json.loads(data)
+    except json.JSONDecodeError:
+        print("❌ Lỗi JSON, reset file sessions.json")
+        with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+            f.write("[]")
+        return []
 
 def save_accounts(data):
-    json.dump(data, open(SESSIONS_FILE, "w", encoding="utf-8"), indent=2)
+    with open(SESSIONS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
 def can_open_box(acc_id):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -62,25 +83,26 @@ def can_open_box(acc_id):
 def add_box_count(acc_id):
     acc_box_count[acc_id]["count"] += 1
 
-async def send_group_log(bot_admin, message):
-    try:
-        await bot_admin.send_message(GR_LOG, message)
-    except:
-        pass
-
 # ---------------- ACCOUNT BOT -----------------
 async def start_account(session_name, bot_admin):
     client = TelegramClient(StringSession(session_name), API_ID, API_HASH)
     await client.start()
     clients.append(client)
 
-    me = await client.get_me()
-    await send_group_log(bot_admin, f"✅ Acc ONLINE: {me.first_name}")
+    try:
+        me = await client.get_me()
+        await send_group_log(bot_admin, f"✅ Acc ONLINE: {me.first_name}")
+    except:
+        await send_group_log(bot_admin, f"❌ Acc OFFLINE: {session_name}")
+        return
 
     @client.on(events.NewMessage(from_users=TARGET_BOT))
     async def grabber(ev):
-        me = await client.get_me()
-        text = ev.raw_text.lower()
+        try:
+            me = await client.get_me()
+            text = ev.raw_text.lower()
+        except: return
+
         if ("hộp" in text or "đập" in text or "mở" in text) and bot_active and box_active:
             if in_sleep_time() or not in_active_time():
                 log_event(me.first_name,"SKIP_OUT_OF_TIME",text)
@@ -114,7 +136,8 @@ async def admin_bot():
              Button.inline("📊 Thống kê", b"stats")],
             [Button.inline("⏸️ Pause bot", b"pause"),
              Button.inline("▶️ Resume bot", b"resume")],
-            [Button.inline("🔘 Toggle hộp", b"toggle_box")]
+            [Button.inline("🔘 Toggle hộp", b"toggle_box"),
+             Button.inline("🧪 Test acc", b"test_acc")]
         ]
 
     @bot.on(events.NewMessage(pattern='/start'))
@@ -154,6 +177,16 @@ async def admin_bot():
             box_active = not box_active
             await e.answer(f"🔘 Chức năng bấm hộp {'BẬT' if box_active else 'TẮT'}")
 
+        elif data == "test_acc":
+            text = "🧪 Kết quả test acc:\n"
+            for c in clients[:]:
+                try:
+                    me = await c.get_me()
+                    text += f"✅ {me.first_name} ONLINE\n"
+                except Exception as ex:
+                    text += f"❌ Acc OFFLINE | {ex}\n"
+            await e.edit(text, buttons=[Button.inline("⬅️ Quay lại", b"back")])
+
         elif data == "back":
             await e.edit("💎 HỆ THỐNG QUẢN TRỊ BOT 💎", buttons=menu())
 
@@ -171,6 +204,16 @@ async def check_acc(bot_admin):
                 await send_group_log(bot_admin,f"❌ Acc OFFLINE: {me_name} | {ex}")
                 clients.remove(c)
         await asyncio.sleep(CHECK_INTERVAL)
+
+async def test_all_acc(bot_admin):
+    while True:
+        for c in clients[:]:
+            try:
+                me = await c.get_me()
+                await send_group_log(bot_admin, f"🧪 Test ONLINE: {me.first_name}")
+            except Exception as ex:
+                await send_group_log(bot_admin, f"🧪 Test OFFLINE: {ex}")
+        await asyncio.sleep(TEST_INTERVAL)
 
 async def backup_sessions():
     while True:
@@ -191,6 +234,7 @@ async def main():
 
     asyncio.create_task(check_acc(bot_admin))
     asyncio.create_task(backup_sessions())
+    asyncio.create_task(test_all_acc(bot_admin))
 
     print("BOT RUNNING")
     await asyncio.gather(*[c.run_until_disconnected() for c in clients], bot_admin.run_until_disconnected())
