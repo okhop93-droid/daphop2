@@ -13,11 +13,9 @@ API_HASH = "18d34c7efc396d277f3db62baa078efc"
 BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 
 BOT_GAME = "xocdia88_bot_uytin_bot"
-LOG_GROUP = -1001234567890   # nhóm nhận log code
+LOG_GROUP = -1001234567890  # nhóm nhận log code
 SESSION_FILE = "sessions.txt"
 CODES_FILE = "codes.json"
-
-CHECK_INTERVAL = 60  # check acc mỗi phút
 
 # ===== FLASK KEEP ALIVE =====
 app = Flask(__name__)
@@ -26,28 +24,14 @@ def home():
     return "BOT ONLINE"
 
 # ===== STATE =====
-ACCS = {}       # acc_id -> info
+ACCS = {}        # acc_id -> info
 TOTAL_CODE = 0
-
-# ===== LOAD CODES CŨ =====
-if os.path.exists(CODES_FILE):
-    with open(CODES_FILE, "r") as f:
-        CODES_DB = json.load(f)
-else:
-    CODES_DB = {}  # acc_id -> list of codes
-
-def save_codes():
-    with open(CODES_FILE, "w") as f:
-        json.dump(CODES_DB, f, indent=2)
+CODES_DB = []    # lưu code từng acc
 
 # ===== TIME CHECK =====
 def in_time():
     h = datetime.now().hour + datetime.now().minute / 60
-    return (
-        7 <= h <= 9.5 or
-        11 <= h <= 14.5 or
-        19 <= h <= 24
-    )
+    return 7 <= h <= 9.5 or 11 <= h <= 14.5 or 19 <= h <= 24
 
 def sleeping_time():
     h = datetime.now().hour
@@ -59,7 +43,8 @@ admin = TelegramClient("admin", API_ID, API_HASH)
 def menu():
     return [
         [Button.inline("📦 Acc", b"acc")],
-        [Button.inline("➕ Nạp Acc", b"nạp_acc")],
+        [Button.inline("➕ Nap Acc", b"nap_acc")],
+        [Button.inline("🧪 Test Acc", b"test_acc")],
         [Button.inline("📊 Thống kê", b"stat")],
         [Button.inline("♻️ Restart", b"restart")]
     ]
@@ -79,43 +64,21 @@ async def cb(e):
             txt += f"- {a['name']} | {a['status']}\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
 
+    elif e.data == b"nap_acc":
+        await e.edit("💾 Gửi session string mới:", buttons=[[Button.inline("⬅️ Back", b"back")]])
+
+    elif e.data == b"test_acc":
+        await e.edit("🧪 Test acc ...", buttons=[[Button.inline("⬅️ Back", b"back")]])
+
     elif e.data == b"stat":
         await e.edit(
-            f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}",
+            f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}\n💾 Tổng code lưu: {len(CODES_DB)}",
             buttons=[[Button.inline("⬅️ Back", b"back")]]
         )
 
     elif e.data == b"restart":
         await e.edit("♻️ Restart...")
         os._exit(0)
-
-    elif e.data == b"nạp_acc":
-        await e.edit("📩 Gửi StringSession của acc để nạp:", buttons=[[Button.inline("⬅️ Back", b"back")]])
-        @admin.on(events.NewMessage(from_users=e.sender_id))
-        async def add_acc_msg(ev2):
-            s = ev2.message.strip()
-            try:
-                c = TelegramClient(StringSession(s), API_ID, API_HASH)
-                await c.connect()
-                if not await c.is_user_authorized():
-                    await ev2.reply("❌ Acc chưa login hoặc session sai!")
-                    return
-                me = await c.get_me()
-                # lưu session vào file
-                with open(SESSION_FILE, "a") as f:
-                    f.write(s + "\n")
-                # thêm vào ACCS
-                ACCS[me.id] = {
-                    "client": c,
-                    "name": me.first_name,
-                    "id": me.id,
-                    "status": "ONLINE",
-                    "last": None
-                }
-                asyncio.create_task(grab_loop(ACCS[me.id]))
-                await ev2.reply(f"✅ Thêm acc {me.first_name} thành công!")
-            except Exception as ex:
-                await ev2.reply(f"❌ Lỗi: {ex}")
 
     elif e.data == b"back":
         await e.edit("🤖 MENU", buttons=menu())
@@ -128,6 +91,21 @@ async def notify_admin(acc):
             f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
         )
 
+# ===== SAVE/LOAD CODE =====
+def save_code(code_data):
+    CODES_DB.append(code_data)
+    with open(CODES_FILE, "w", encoding="utf-8") as f:
+        json.dump(CODES_DB, f, ensure_ascii=False, indent=2)
+
+def load_codes():
+    global CODES_DB
+    if os.path.exists(CODES_FILE):
+        with open(CODES_FILE, "r", encoding="utf-8") as f:
+            try:
+                CODES_DB = json.load(f)
+            except:
+                CODES_DB = []
+
 # ===== GRAB HỘP =====
 async def grab_loop(acc):
     global TOTAL_CODE
@@ -137,49 +115,41 @@ async def grab_loop(acc):
     async def handler(ev):
         if sleeping_time(): return
         if not in_time(): return
-        if not ev.message: return
+        if not ev.reply_markup: return
 
-        btn = None
-        if ev.reply_markup:
-            btn = next(
-                (b for r in ev.reply_markup.rows for b in r.buttons
-                 if any(x in b.text.lower() for x in ["đập", "hộp", "mở"])),
-                None
-            )
-        if btn:
-            try:
-                await asyncio.sleep(random.uniform(0.3, 1.2))
-                await ev.click()  # nhấn 1 lần
-                await asyncio.sleep(1.2)
+        btn = next(
+            (b for r in ev.reply_markup.rows for b in r.buttons
+             if any(x in b.text.lower() for x in ["đập", "hộp", "mở"])),
+            None
+        )
+        if not btn: return
 
-                msg = await client.get_messages(BOT_GAME, limit=1)
-                if msg and msg[0].message:
-                    m = re.search(r"Mã code của bạn là:\s*([A-Z0-9]+)", msg[0].message, re.I)
-                    if m:
-                        code = m.group(1)
-                        acc_id = str(acc["id"])
+        try:
+            await asyncio.sleep(random.uniform(0.3, 1.2))
+            await ev.click()  # nhấn 1 lần
+            await asyncio.sleep(1.2)
 
-                        if acc_id not in CODES_DB:
-                            CODES_DB[acc_id] = []
+            msg = await client.get_messages(BOT_GAME, limit=1)
+            if msg and msg[0].message:
+                m = re.search(r"code.*?:\s*([A-Z0-9]+)", msg[0].message, re.I)
+                if m:
+                    code = m.group(1)
+                    if code != acc.get("last"):
+                        acc["last"] = code
+                        TOTAL_CODE += 1
+                        # gửi vào nhóm
+                        if LOG_GROUP:
+                            await admin.send_message(
+                                LOG_GROUP,
+                                f"💌 ACC: {acc['name']}\n🎁 CODE: `{code}`"
+                            )
+                        # lưu lại bot
+                        save_code({"acc": acc['name'], "code": code})
 
-                        if code not in CODES_DB[acc_id]:
-                            CODES_DB[acc_id].append(code)
-                            save_codes()
-                            TOTAL_CODE += 1
-
-                            if LOG_GROUP:
-                                await admin.send_message(
-                                    LOG_GROUP,
-                                    f"💌 ACC: {acc['name']}\n🎁 CODE: `{code}`"
-                                )
-                            acc["last"] = code
-
-                acc["status"] = "ONLINE"
-
-            except FloodWaitError:
-                acc["status"] = "FLOOD"
-            except:
-                acc["status"] = "ERROR"
+        except FloodWaitError:
+            acc["status"] = "FLOOD"
+        except:
+            acc["status"] = "ERROR"
 
 # ===== WATCHER ACC =====
 async def acc_watcher():
@@ -200,7 +170,7 @@ async def acc_watcher():
             if acc["status"] != prev_status:
                 await notify_admin(acc)
 
-        await asyncio.sleep(CHECK_INTERVAL)
+        await asyncio.sleep(60)  # check mỗi phút
 
 # ===== LOAD ACC =====
 async def load_accounts():
@@ -220,7 +190,6 @@ async def load_accounts():
                 ACCS[me.id] = {
                     "client": c,
                     "name": me.first_name,
-                    "id": me.id,
                     "status": "ONLINE",
                     "last": None
                 }
@@ -231,6 +200,7 @@ async def load_accounts():
 # ===== MAIN =====
 async def main():
     await admin.start(bot_token=BOT_TOKEN)
+    load_codes()
     await load_accounts()
     asyncio.create_task(acc_watcher())
     await admin.run_until_disconnected()
