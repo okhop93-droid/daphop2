@@ -14,7 +14,6 @@ BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 
 BOT_GAME = "xocdia88_bot_uytin_bot"
 LOG_GROUP = -1001234567890   # group nhận log mã / có thể bỏ
-
 SESSION_FILE = "sessions.txt"
 
 # ===== FLASK KEEP ALIVE =====
@@ -23,9 +22,12 @@ app = Flask(__name__)
 def home():
     return "BOT ONLINE"
 
+Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
+
 # ===== STATE =====
 ACCS = {}   # acc_id -> info
 TOTAL_CODE = 0
+PENDING_LOGIN = {}  # sender_id -> {"client", "phone", "hash"}
 
 # ===== TIME CHECK =====
 def in_time():
@@ -46,6 +48,7 @@ admin = TelegramClient("admin", API_ID, API_HASH)
 def menu():
     return [
         [Button.inline("📦 Acc", b"acc")],
+        [Button.inline("➕ Nạp Acc", b"add")],
         [Button.inline("📊 Thống kê", b"stat")],
         [Button.inline("♻️ Restart", b"restart")]
     ]
@@ -65,6 +68,14 @@ async def cb(e):
             txt += f"- {a['name']} | {a['status']}\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
 
+    elif e.data == b"add":
+        await e.edit(
+            "➕ NẠP ACC\n"
+            "- Gửi SESSION1|SESSION2\n"
+            "- Hoặc /login SĐT để login thủ công",
+            buttons=[[Button.inline("⬅️ Back", b"back")]]
+        )
+
     elif e.data == b"stat":
         await e.edit(
             f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}",
@@ -78,13 +89,19 @@ async def cb(e):
     elif e.data == b"back":
         await e.edit("🤖 MENU", buttons=menu())
 
-# ===== HELPER NOTIFY =====
+# ===== HELPER =====
 async def notify_admin(acc):
     if admin.is_connected:
         await admin.send_message(
             LOG_GROUP,
             f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
         )
+
+def save_session(sess):
+    with open(SESSION_FILE, "a+") as f:
+        f.seek(0)
+        if sess not in f.read():
+            f.write(sess + "\n")
 
 # ===== GRAB HỘP =====
 async def grab_loop(acc):
@@ -146,7 +163,7 @@ async def acc_watcher():
             if acc["status"] != prev_status:
                 await notify_admin(acc)
 
-        await asyncio.sleep(60)  # check mỗi phút
+        await asyncio.sleep(60)
 
 # ===== LOAD ACC =====
 async def load_accounts():
@@ -173,6 +190,43 @@ async def load_accounts():
             except:
                 continue
 
+# ===== LOGIN THỦ CÔNG =====
+@admin.on(events.NewMessage(pattern="/login"))
+async def login_handler(e):
+    try:
+        phone = "".join(filter(str.isdigit, e.text.split(" ",1)[1]))
+        c = TelegramClient(StringSession(), API_ID, API_HASH)
+        await c.connect()
+        sent = await c.send_code_request(phone)
+        PENDING_LOGIN[e.sender_id] = {"client":c, "phone":phone, "hash":sent.phone_code_hash}
+        await e.respond(f"📩 OTP đã gửi đến +{phone}. Nhập /otp 12345 để xác thực.")
+    except:
+        await e.respond("❌ Sai định dạng /login + SĐT")
+
+@admin.on(events.NewMessage(pattern="/otp"))
+async def otp_handler(e):
+    if e.sender_id not in PENDING_LOGIN:
+        await e.respond("❌ Không có yêu cầu login")
+        return
+    data = PENDING_LOGIN[e.sender_id]
+    code = "".join(filter(str.isdigit, e.text))
+    try:
+        await data["client"].sign_in(data["phone"], code, phone_code_hash=data["hash"])
+        sess_str = data["client"].session.save()
+        save_session(sess_str)
+        me = await data["client"].get_me()
+        ACCS[me.id] = {
+            "client": data["client"],
+            "name": me.first_name,
+            "status": "ONLINE",
+            "last": None
+        }
+        asyncio.create_task(grab_loop(ACCS[me.id]))
+        del PENDING_LOGIN[e.sender_id]
+        await e.respond(f"✅ Kích hoạt thành công: {me.first_name}")
+    except Exception as ex:
+        await e.respond(f"❌ Lỗi OTP: {ex}")
+
 # ===== MAIN =====
 async def main():
     await admin.start(bot_token=BOT_TOKEN)
@@ -182,5 +236,4 @@ async def main():
 
 # ===== RUN =====
 if __name__ == "__main__":
-    Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
     asyncio.run(main())
