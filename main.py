@@ -8,7 +8,7 @@ from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
 # ===== CONFIG =====
-API_ID = "API_ID"
+API_ID = 36437338
 API_HASH = "API_HASH"
 BOT_TOKEN = "BOT_TOKEN"
 
