@@ -1,133 +1,186 @@
-import asyncio, os
-from telethon import TelegramClient, Button
-from telethon.sessions import StringSession
-from flask import Flask
+import asyncio, random, re, os
+from datetime import datetime
 from threading import Thread
-from worker import worker_loop
+from flask import Flask
+
+from telethon import TelegramClient, events, Button
+from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError
 
 # ===== CONFIG =====
-API_ID = 36437338
+API_ID = "API_ID"
 API_HASH = "API_HASH"
 BOT_TOKEN = "BOT_TOKEN"
-SESSION_FILE = "sessions.txt"
+
 BOT_GAME = "xocdia88_bot_uytin_bot"
+LOG_GROUP = -1001234567890   # group nhận log mã / có thể bỏ
 
-# ===== STATE =====
-ACCOUNTS = []  # mỗi item: {"id", "client", "name", "enable", "task", "bot_game"}
+SESSION_FILE = "sessions.txt"
 
-# ===== FLASK =====
+# ===== FLASK KEEP ALIVE =====
 app = Flask(__name__)
 @app.route("/")
 def home():
-    return "SERVICE ONLINE"
+    return "BOT ONLINE"
 
-# ===== UTIL =====
-def save_session(sess):
-    with open(SESSION_FILE, "a+") as f:
-        f.seek(0)
-        if sess not in f.read():
-            f.write(sess + "\n")
+# ===== STATE =====
+ACCS = {}   # acc_id -> info
+TOTAL_CODE = 0
+
+# ===== TIME CHECK =====
+def in_time():
+    h = datetime.now().hour + datetime.now().minute / 60
+    return (
+        7 <= h <= 9.5 or
+        11 <= h <= 14.5 or
+        19 <= h <= 24
+    )
+
+def sleeping_time():
+    h = datetime.now().hour
+    return 2 <= h < 6
 
 # ===== ADMIN BOT =====
-bot = TelegramClient("admin", API_ID, API_HASH)
+admin = TelegramClient("admin", API_ID, API_HASH)
 
 def menu():
     return [
-        [Button.inline("➕ Nạp Acc", b"add")],
-        [Button.inline("📦 Danh sách Acc", b"list")],
+        [Button.inline("📦 Acc", b"acc")],
+        [Button.inline("📊 Thống kê", b"stat")],
         [Button.inline("♻️ Restart", b"restart")]
     ]
 
-@bot.on(events.NewMessage(pattern="/start"))
+@admin.on(events.NewMessage(pattern="/start"))
 async def start(e):
-    await e.respond(f"🤖 BOT DỊCH VỤ\n📦 Acc: {len(ACCOUNTS)}", buttons=menu())
+    await e.respond(
+        f"🤖 BOT ĐẬP HỘP\n📦 Acc: {len(ACCS)}\n🎁 Tổng mã: {TOTAL_CODE}",
+        buttons=menu()
+    )
 
-# ===== CALLBACK =====
-@bot.on(events.CallbackQuery)
+@admin.on(events.CallbackQuery)
 async def cb(e):
-    uid = e.sender_id
-
-    if e.data == b"add":
-        await e.edit("➕ NẠP ACC\nGửi SESSION", buttons=[[Button.inline("⬅️ Back", b"back")]])
-
-    elif e.data == b"list":
+    if e.data == b"acc":
         txt = "📦 DANH SÁCH ACC\n"
-        for acc in ACCOUNTS:
-            txt += f"- {acc['name']} | enable: {acc['enable']}\n"
+        for a in ACCS.values():
+            txt += f"- {a['name']} | {a['status']}\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
 
+    elif e.data == b"stat":
+        await e.edit(
+            f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}",
+            buttons=[[Button.inline("⬅️ Back", b"back")]]
+        )
+
     elif e.data == b"restart":
-        await e.edit("♻️ Restarting...")
+        await e.edit("♻️ Restart...")
         os._exit(0)
 
     elif e.data == b"back":
         await e.edit("🤖 MENU", buttons=menu())
 
-# ===== NẠP ACC =====
-@bot.on(events.NewMessage)
-async def on_message(e):
-    if not e.is_private: return
-    lines = e.text.strip().splitlines()
-    ok = 0
+# ===== HELPER NOTIFY =====
+async def notify_admin(acc):
+    if admin.is_connected:
+        await admin.send_message(
+            LOG_GROUP,
+            f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
+        )
 
-    for line in lines:
-        parts = line.split("|") if "|" in line else [line]
-        for sess in parts:
+# ===== GRAB HỘP =====
+async def grab_loop(acc):
+    global TOTAL_CODE
+    client = acc["client"]
+
+    @client.on(events.NewMessage(chats=BOT_GAME))
+    async def handler(ev):
+        if sleeping_time(): return
+        if not in_time(): return
+        if not ev.reply_markup: return
+
+        btn = next(
+            (b for r in ev.reply_markup.rows for b in r.buttons
+             if any(x in b.text.lower() for x in ["đập", "hộp", "mở"])),
+            None
+        )
+        if not btn: return
+
+        try:
+            await asyncio.sleep(random.uniform(0.3, 1.2))
+            await ev.click()  # nhấn 1 lần
+            await asyncio.sleep(1.2)
+
+            msg = await client.get_messages(BOT_GAME, limit=1)
+            if msg and msg[0].message:
+                m = re.search(r"code.*?:\s*([A-Z0-9]+)", msg[0].message, re.I)
+                if m:
+                    code = m.group(1)
+                    if code != acc.get("last"):
+                        acc["last"] = code
+                        TOTAL_CODE += 1
+                        if LOG_GROUP:
+                            await admin.send_message(
+                                LOG_GROUP,
+                                f"💌 ACC: {acc['name']}\n🎁 CODE: `{code}`"
+                            )
+        except FloodWaitError:
+            acc["status"] = "FLOOD"
+        except:
+            acc["status"] = "ERROR"
+
+# ===== WATCHER ACC =====
+async def acc_watcher():
+    while True:
+        for acc in ACCS.values():
+            client = acc["client"]
+            prev_status = acc["status"]
             try:
-                client = TelegramClient(StringSession(sess.strip()), API_ID, API_HASH)
-                await client.connect()
                 if not await client.is_user_authorized():
-                    continue
-                me = await client.get_me()
-                acc = {
-                    "id": me.id,
+                    acc["status"] = "OFFLINE"
+                else:
+                    acc["status"] = "ONLINE"
+            except FloodWaitError:
+                acc["status"] = "FLOOD"
+            except:
+                acc["status"] = "ERROR"
+
+            if acc["status"] != prev_status:
+                await notify_admin(acc)
+
+        await asyncio.sleep(60)  # check mỗi phút
+
+# ===== LOAD ACC =====
+async def load_accounts():
+    if not os.path.exists(SESSION_FILE): return
+
+    with open(SESSION_FILE) as f:
+        for s in f:
+            s = s.strip()
+            if not s: continue
+
+            try:
+                c = TelegramClient(StringSession(s), API_ID, API_HASH)
+                await c.connect()
+                if not await c.is_user_authorized(): continue
+
+                me = await c.get_me()
+                ACCS[me.id] = {
+                    "client": c,
                     "name": me.first_name,
-                    "client": client,
-                    "enable": True,
-                    "task": None,
-                    "bot_game": BOT_GAME,
-                    "last_code": None
+                    "status": "ONLINE",
+                    "last": None
                 }
-                acc["task"] = asyncio.create_task(worker_loop(acc))
-                ACCOUNTS.append(acc)
-                save_session(sess.strip())
-                ok += 1
+                asyncio.create_task(grab_loop(ACCS[me.id]))
             except:
                 continue
 
-    await e.respond(f"✅ Đã nạp {ok} acc")
-
-# ===== START =====
+# ===== MAIN =====
 async def main():
-    await bot.start(bot_token=BOT_TOKEN)
-    if os.path.exists(SESSION_FILE):
-        with open(SESSION_FILE) as f:
-            for s in f:
-                s = s.strip()
-                if not s: continue
-                client = TelegramClient(StringSession(s), API_ID, API_HASH)
-                await client.connect()
-                if not await client.is_user_authorized(): continue
-                me = await client.get_me()
-                acc = {
-                    "id": me.id,
-                    "name": me.first_name,
-                    "client": client,
-                    "enable": True,
-                    "task": asyncio.create_task(worker_loop({
-                        "client": client,
-                        "name": me.first_name,
-                        "enable": True,
-                        "bot_game": BOT_GAME,
-                        "last_code": None
-                    })),
-                    "bot_game": BOT_GAME,
-                    "last_code": None
-                }
-                ACCOUNTS.append(acc)
+    await admin.start(bot_token=BOT_TOKEN)
+    await load_accounts()
+    asyncio.create_task(acc_watcher())
+    await admin.run_until_disconnected()
 
-    await bot.run_until_disconnected()
-
+# ===== RUN =====
 if __name__ == "__main__":
     Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
     asyncio.run(main())
