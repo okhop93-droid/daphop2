@@ -1,5 +1,5 @@
 import asyncio, random, re, os
-from datetime import datetime
+from datetime import datetime, timedelta
 from threading import Thread
 from flask import Flask
 
@@ -13,7 +13,6 @@ API_HASH = "18d34c7efc396d277f3db62baa078efc"
 BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 
 BOT_GAME = "xocdia88_bot_uytin_bot"
-LOG_GROUP = -1001234567890   # group nhận log mã / có thể bỏ
 SESSION_FILE = "sessions.txt"
 
 # ===== FLASK KEEP ALIVE =====
@@ -21,25 +20,23 @@ app = Flask(__name__)
 @app.route("/")
 def home():
     return "BOT ONLINE"
-
 Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
 # ===== STATE =====
-ACCS = {}   # acc_id -> info
+ACCS = {}           # acc_id -> info
 TOTAL_CODE = 0
 PENDING_LOGIN = {}  # sender_id -> {"client", "phone", "hash"}
 
-# ===== TIME CHECK =====
+# ===== TIME VN =====
+def now_vn():
+    return datetime.utcnow() + timedelta(hours=7)
+
 def in_time():
-    h = datetime.now().hour + datetime.now().minute / 60
-    return (
-        7 <= h <= 9.5 or
-        11 <= h <= 14.5 or
-        19 <= h <= 24
-    )
+    h = now_vn().hour + now_vn().minute/60
+    return 7 <= h <= 9.5 or 11 <= h <= 14.5 or 19 <= h <= 24
 
 def sleeping_time():
-    h = datetime.now().hour
+    h = now_vn().hour
     return 2 <= h < 6
 
 # ===== ADMIN BOT =====
@@ -49,6 +46,7 @@ def menu():
     return [
         [Button.inline("📦 Acc", b"acc")],
         [Button.inline("➕ Nạp Acc", b"add")],
+        [Button.inline("🧪 Test Acc", b"test")],
         [Button.inline("📊 Thống kê", b"stat")],
         [Button.inline("♻️ Restart", b"restart")]
     ]
@@ -76,6 +74,23 @@ async def cb(e):
             buttons=[[Button.inline("⬅️ Back", b"back")]]
         )
 
+    elif e.data == b"test":
+        txt = "🧪 KIỂM TRA ACC...\n"
+        await e.edit(txt)
+        for a in ACCS.values():
+            client = a["client"]
+            try:
+                if await client.is_user_authorized():
+                    a["status"] = "ONLINE"
+                else:
+                    a["status"] = "OFFLINE"
+            except FloodWaitError:
+                a["status"] = "FLOOD"
+            except:
+                a["status"] = "ERROR"
+            txt += f"- {a['name']} | {a['status']}\n"
+        await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
+
     elif e.data == b"stat":
         await e.edit(
             f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}",
@@ -90,12 +105,10 @@ async def cb(e):
         await e.edit("🤖 MENU", buttons=menu())
 
 # ===== HELPER =====
-async def notify_admin(acc):
+async def notify_admin(acc, msg=None):
     if admin.is_connected:
-        await admin.send_message(
-            LOG_GROUP,
-            f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
-        )
+        text = msg if msg else f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
+        await admin.send_message(admin.me.id, text)
 
 def save_session(sess):
     with open(SESSION_FILE, "a+") as f:
@@ -134,11 +147,7 @@ async def grab_loop(acc):
                     if code != acc.get("last"):
                         acc["last"] = code
                         TOTAL_CODE += 1
-                        if LOG_GROUP:
-                            await admin.send_message(
-                                LOG_GROUP,
-                                f"💌 ACC: {acc['name']}\n🎁 CODE: `{code}`"
-                            )
+                        await notify_admin(acc, f"💌 ACC: {acc['name']}\n🎁 CODE: `{code}`")
         except FloodWaitError:
             acc["status"] = "FLOOD"
         except:
