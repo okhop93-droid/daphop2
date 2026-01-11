@@ -9,8 +9,8 @@ from telethon.errors import FloodWaitError
 
 # ===== CONFIG =====
 API_ID = 36437338
-API_HASH = "API_HASH"
-BOT_TOKEN = "BOT_TOKEN"
+API_HASH = "18d34c7efc396d277f3db62baa078efc"
+BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 
 BOT_GAME = "xocdia88_bot_uytin_bot"
 LOG_GROUP = -1001234567890   # group nhận log mã / có thể bỏ
