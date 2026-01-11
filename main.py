@@ -29,7 +29,7 @@ def home():
 ACCS = {}       # acc_id -> info
 TOTAL_CODE = 0
 
-# load codes cũ
+# ===== LOAD CODES CŨ =====
 if os.path.exists(CODES_FILE):
     with open(CODES_FILE, "r") as f:
         CODES_DB = json.load(f)
@@ -59,6 +59,7 @@ admin = TelegramClient("admin", API_ID, API_HASH)
 def menu():
     return [
         [Button.inline("📦 Acc", b"acc")],
+        [Button.inline("➕ Nạp Acc", b"nạp_acc")],
         [Button.inline("📊 Thống kê", b"stat")],
         [Button.inline("♻️ Restart", b"restart")]
     ]
@@ -88,6 +89,34 @@ async def cb(e):
         await e.edit("♻️ Restart...")
         os._exit(0)
 
+    elif e.data == b"nạp_acc":
+        await e.edit("📩 Gửi StringSession của acc để nạp:", buttons=[[Button.inline("⬅️ Back", b"back")]])
+        @admin.on(events.NewMessage(from_users=e.sender_id))
+        async def add_acc_msg(ev2):
+            s = ev2.message.strip()
+            try:
+                c = TelegramClient(StringSession(s), API_ID, API_HASH)
+                await c.connect()
+                if not await c.is_user_authorized():
+                    await ev2.reply("❌ Acc chưa login hoặc session sai!")
+                    return
+                me = await c.get_me()
+                # lưu session vào file
+                with open(SESSION_FILE, "a") as f:
+                    f.write(s + "\n")
+                # thêm vào ACCS
+                ACCS[me.id] = {
+                    "client": c,
+                    "name": me.first_name,
+                    "id": me.id,
+                    "status": "ONLINE",
+                    "last": None
+                }
+                asyncio.create_task(grab_loop(ACCS[me.id]))
+                await ev2.reply(f"✅ Thêm acc {me.first_name} thành công!")
+            except Exception as ex:
+                await ev2.reply(f"❌ Lỗi: {ex}")
+
     elif e.data == b"back":
         await e.edit("🤖 MENU", buttons=menu())
 
@@ -110,7 +139,6 @@ async def grab_loop(acc):
         if not in_time(): return
         if not ev.message: return
 
-        # tìm button đập hộp
         btn = None
         if ev.reply_markup:
             btn = next(
@@ -131,7 +159,6 @@ async def grab_loop(acc):
                         code = m.group(1)
                         acc_id = str(acc["id"])
 
-                        # lưu code riêng từng acc
                         if acc_id not in CODES_DB:
                             CODES_DB[acc_id] = []
 
@@ -140,7 +167,6 @@ async def grab_loop(acc):
                             save_codes()
                             TOTAL_CODE += 1
 
-                            # gửi code về nhóm
                             if LOG_GROUP:
                                 await admin.send_message(
                                     LOG_GROUP,
