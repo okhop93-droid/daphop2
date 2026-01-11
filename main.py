@@ -1,8 +1,7 @@
-import asyncio, random, re, os
+import asyncio, random, re, os, json
 from datetime import datetime, timedelta
 from threading import Thread
 from flask import Flask
-
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
@@ -11,9 +10,10 @@ from telethon.errors import FloodWaitError
 API_ID = 36437338
 API_HASH = "18d34c7efc396d277f3db62baa078efc"
 BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
-
 BOT_GAME = "xocdia88_bot_uytin_bot"
 SESSION_FILE = "sessions.txt"
+CODES_FILE = "codes.json"
+LOG_GROUP = -1001234567890  # ID nhóm nhận log mã
 
 # ===== FLASK KEEP ALIVE =====
 app = Flask(__name__)
@@ -23,9 +23,10 @@ def home():
 Thread(target=lambda: app.run(host="0.0.0.0", port=8080)).start()
 
 # ===== STATE =====
-ACCS = {}           # acc_id -> info
+ACCS = {}           # acc_id -> {"client","name","status","last"}
 TOTAL_CODE = 0
-PENDING_LOGIN = {}  # sender_id -> {"client", "phone", "hash"}
+CODES_DB = {}       # acc_id -> last code
+PENDING_LOGIN = {}  # sender_id -> {"client","phone","hash"}
 
 # ===== TIME VN =====
 def now_vn():
@@ -51,6 +52,33 @@ def menu():
         [Button.inline("♻️ Restart", b"restart")]
     ]
 
+# ===== HELPER =====
+async def notify_admin(acc, msg=None):
+    text = msg if msg else f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
+    try:
+        if LOG_GROUP:
+            await admin.send_message(LOG_GROUP, text)
+        await admin.send_message(admin.me.id, text)
+    except Exception as e:
+        print("❌ Lỗi notify:", e)
+
+def save_session(sess):
+    with open(SESSION_FILE, "a+") as f:
+        f.seek(0)
+        if sess not in f.read():
+            f.write(sess + "\n")
+
+def save_codes():
+    with open(CODES_FILE, "w") as f:
+        json.dump(CODES_DB, f, indent=2)
+
+def load_codes():
+    global CODES_DB
+    if os.path.exists(CODES_FILE):
+        with open(CODES_FILE) as f:
+            CODES_DB = json.load(f)
+
+# ===== ADMIN MENU =====
 @admin.on(events.NewMessage(pattern="/start"))
 async def start(e):
     await e.respond(
@@ -92,10 +120,7 @@ async def cb(e):
         await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
 
     elif e.data == b"stat":
-        await e.edit(
-            f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}",
-            buttons=[[Button.inline("⬅️ Back", b"back")]]
-        )
+        await e.edit(f"📊 THỐNG KÊ\n🎁 Tổng mã: {TOTAL_CODE}", buttons=[[Button.inline("⬅️ Back", b"back")]])
 
     elif e.data == b"restart":
         await e.edit("♻️ Restart...")
@@ -103,18 +128,6 @@ async def cb(e):
 
     elif e.data == b"back":
         await e.edit("🤖 MENU", buttons=menu())
-
-# ===== HELPER =====
-async def notify_admin(acc, msg=None):
-    if admin.is_connected:
-        text = msg if msg else f"⚠️ ACC `{acc['name']}` hiện trạng thái: {acc['status']}"
-        await admin.send_message(admin.me.id, text)
-
-def save_session(sess):
-    with open(SESSION_FILE, "a+") as f:
-        f.seek(0)
-        if sess not in f.read():
-            f.write(sess + "\n")
 
 # ===== GRAB HỘP =====
 async def grab_loop(acc):
@@ -129,14 +142,14 @@ async def grab_loop(acc):
 
         btn = next(
             (b for r in ev.reply_markup.rows for b in r.buttons
-             if any(x in b.text.lower() for x in ["đập", "hộp", "mở"])),
+             if any(x in b.text.lower() for x in ["đập","hộp","mở"])),
             None
         )
         if not btn: return
 
         try:
-            await asyncio.sleep(random.uniform(0.3, 1.2))
-            await ev.click()  # nhấn 1 lần
+            await asyncio.sleep(random.uniform(0.3,1.2))
+            await ev.click()
             await asyncio.sleep(1.2)
 
             msg = await client.get_messages(BOT_GAME, limit=1)
@@ -147,6 +160,8 @@ async def grab_loop(acc):
                     if code != acc.get("last"):
                         acc["last"] = code
                         TOTAL_CODE += 1
+                        CODES_DB[str(acc["id"])] = code
+                        save_codes()
                         await notify_admin(acc, f"💌 ACC: {acc['name']}\n🎁 CODE: `{code}`")
         except FloodWaitError:
             acc["status"] = "FLOOD"
@@ -156,33 +171,32 @@ async def grab_loop(acc):
 # ===== WATCHER ACC =====
 async def acc_watcher():
     while True:
-        for acc in ACCS.values():
-            client = acc["client"]
-            prev_status = acc["status"]
+        for a in ACCS.values():
+            client = a["client"]
+            prev = a["status"]
             try:
                 if not await client.is_user_authorized():
-                    acc["status"] = "OFFLINE"
+                    a["status"] = "OFFLINE"
                 else:
-                    acc["status"] = "ONLINE"
+                    a["status"] = "ONLINE"
             except FloodWaitError:
-                acc["status"] = "FLOOD"
+                a["status"] = "FLOOD"
             except:
-                acc["status"] = "ERROR"
+                a["status"] = "ERROR"
 
-            if acc["status"] != prev_status:
-                await notify_admin(acc)
-
+            if a["status"] != prev:
+                await notify_admin(a)
         await asyncio.sleep(60)
 
 # ===== LOAD ACC =====
 async def load_accounts():
+    load_codes()
     if not os.path.exists(SESSION_FILE): return
 
     with open(SESSION_FILE) as f:
         for s in f:
             s = s.strip()
             if not s: continue
-
             try:
                 c = TelegramClient(StringSession(s), API_ID, API_HASH)
                 await c.connect()
@@ -190,10 +204,11 @@ async def load_accounts():
 
                 me = await c.get_me()
                 ACCS[me.id] = {
+                    "id": me.id,
                     "client": c,
                     "name": me.first_name,
                     "status": "ONLINE",
-                    "last": None
+                    "last": CODES_DB.get(str(me.id))
                 }
                 asyncio.create_task(grab_loop(ACCS[me.id]))
             except:
@@ -203,12 +218,12 @@ async def load_accounts():
 @admin.on(events.NewMessage(pattern="/login"))
 async def login_handler(e):
     try:
-        phone = "".join(filter(str.isdigit, e.text.split(" ",1)[1]))
+        phone = "".join(filter(str.isdigit,e.text.split(" ",1)[1]))
         c = TelegramClient(StringSession(), API_ID, API_HASH)
         await c.connect()
         sent = await c.send_code_request(phone)
-        PENDING_LOGIN[e.sender_id] = {"client":c, "phone":phone, "hash":sent.phone_code_hash}
-        await e.respond(f"📩 OTP đã gửi đến +{phone}. Nhập /otp 12345 để xác thực.")
+        PENDING_LOGIN[e.sender_id] = {"client":c,"phone":phone,"hash":sent.phone_code_hash}
+        await e.respond(f"📩 OTP đã gửi +{phone}, nhập /otp 12345 để xác thực")
     except:
         await e.respond("❌ Sai định dạng /login + SĐT")
 
@@ -225,10 +240,11 @@ async def otp_handler(e):
         save_session(sess_str)
         me = await data["client"].get_me()
         ACCS[me.id] = {
+            "id": me.id,
             "client": data["client"],
             "name": me.first_name,
             "status": "ONLINE",
-            "last": None
+            "last": CODES_DB.get(str(me.id))
         }
         asyncio.create_task(grab_loop(ACCS[me.id]))
         del PENDING_LOGIN[e.sender_id]
