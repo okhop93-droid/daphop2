@@ -38,15 +38,10 @@ def save_codes():
     with open(CODES_FILE, "w") as f:
         json.dump(CODES_DB, f, indent=2)
 
-async def notify_admin(msg):
-    try:
-        await admin.send_message(admin.me.id, msg)
-    except: pass
-
-# ===== LUỒNG ĐẬP HỘP (BÁO CÁO CHUẨN ẢNH 2) =====
+# ===== LUỒNG ĐẬP HỘP (TỰ GỬI VÀO NHÓM - ẢNH 2) =====
 async def grab_loop(acc):
     global TOTAL_CODE
-    client = acc["client"]
+    client = acc["client"] # Đây là client của acc clone
 
     @client.on(events.NewMessage(chats=BOT_GAME))
     async def handler(ev):
@@ -64,7 +59,7 @@ async def grab_loop(acc):
             msgs = await client.get_messages(BOT_GAME, limit=1)
             if msgs and msgs[0].message:
                 raw_text = msgs[0].message
-                # Regex lấy mã chuẩn sau chữ "là:"
+                # Regex lấy mã sau chữ "là:"
                 match = re.search(r'là:\s*([A-Z0-9]+)', raw_text)
                 
                 if match:
@@ -74,13 +69,17 @@ async def grab_loop(acc):
                         acc["last"] = gift_code
                         TOTAL_CODE += 1
                         
-                        # --- GỬI THÔNG BÁO VÀO NHÓM ĐÚNG ĐỊNH DẠNG ẢNH 2 ---
+                        # --- TÀI KHOẢN TỰ GỬI VÀO NHÓM THEO ẢNH 2 ---
                         if LOG_GROUP:
                             # 💌 Acc X (Tên): CODE
                             msg_nhom = f"💌 Acc {acc['stt']} ({acc['name']}):\n`{gift_code}`"
                             try:
+                                # Dùng client của acc để gửi trực tiếp vào nhóm
                                 await client.send_message(LOG_GROUP, msg_nhom)
-                            except: pass
+                            except: 
+                                # Nếu acc chưa vào nhóm thì admin báo lỗi
+                                try: await admin.send_message(admin.me.id, f"⚠️ Acc {acc['stt']} chưa vào nhóm Log!")
+                                except: pass
                         
                         CODES_DB[str(acc["id"])] = gift_code
                         save_codes()
@@ -107,17 +106,14 @@ async def cb(e):
         for a in ACCS.values():
             txt += f"• **Tài khoản {a['stt']}**: {a['name']} ({a['status']})\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
-
     elif e.data == b"stat":
         txt = f"📊 **THỐNG KÊ CHI TIẾT**\n━━━━━━━━━━━━━━\n🎁 Tổng mã húp: `{TOTAL_CODE}`\n\n"
         for a in ACCS.values():
             last_code = a.get('last') or "Chưa có"
             txt += f"• **Tài khoản {a['stt']}**: `{last_code}`\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
-
     elif e.data == b"add":
         await e.edit("➕ **NẠP ACC MỚI**\nSử dụng lệnh: `/login SĐT` (VD: `/login 84123...`)", buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
-
     elif e.data == b"test":
         await e.edit("🧪 **ĐANG KIỂM TRA...**")
         res = "🧪 **KẾT QUẢ KIỂM TRA:**\n"
@@ -128,7 +124,6 @@ async def cb(e):
             except: a['status'] = "LỖI ⚠️"
             res += f"• **TK {a['stt']}**: {a['status']}\n"
         await e.edit(res, buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
-
     elif e.data == b"back":
         await e.edit(f"🤖 **MENU QUẢN LÝ**", buttons=menu())
 
@@ -161,7 +156,7 @@ async def otp_handler(e):
             "name": me.first_name, "status": "ONLINE 🟢", "last": None
         }
         asyncio.create_task(grab_loop(ACCS[me.id]))
-        await e.respond(f"✅ **Thành công!** Tài khoản {new_stt} ({me.first_name}) đang hoạt động.")
+        await e.respond(f"✅ **Thành công!** Tài khoản {new_stt} ({me.first_name}) đang chạy.")
         del PENDING_LOGIN[e.sender_id]
     except Exception as ex: await e.respond(f"❌ Lỗi: {ex}")
 
@@ -190,9 +185,8 @@ async def main():
                         }
                         asyncio.create_task(grab_loop(ACCS[me.id]))
                 except: continue
-
     await admin.run_until_disconnected()
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
+                                
