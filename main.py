@@ -13,7 +13,7 @@ BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 BOT_GAME = "xocdia88_bot_uytin_bot"
 SESSION_FILE = "sessions.txt"
 CODES_FILE = "codes.json"
-LOG_GROUP = -1001234567890  # <--- THAY ID NHÓM CỦA BẠN VÀO ĐÂY
+LOG_GROUP = -1002984339626  # <--- THAY ID NHÓM CỦA BẠN VÀO ĐÂY
 
 # ===== KEEP ALIVE =====
 app = Flask(__name__)
