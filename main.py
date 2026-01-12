@@ -9,9 +9,9 @@ API_ID = 36437338
 API_HASH = "18d34c7efc396d277f3db62baa078efc"
 BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 
-ADMIN_ID = 7816353760   # <<< ID TELEGRAM CỦA BẠN (BẮT BUỘC)
-
+ADMIN_ID = 7816353760
 BOT_GAME = "xocdia88_bot_uytin_bot"
+
 SESSION_FILE = "sessions.txt"
 CODES_FILE = "codes.json"
 
@@ -41,140 +41,127 @@ def save_codes():
 # ===== ADMIN BOT =====
 admin = TelegramClient("admin", API_ID, API_HASH)
 
+def only_admin(e): 
+    return e.sender_id == ADMIN_ID
+
 def menu():
     return [
         [Button.inline("📦 Acc", b"acc"), Button.inline("📊 Thống kê", b"stat")],
-        [Button.inline("➕ Nạp Acc", b"add"), Button.inline("🧪 Test", b"test")]
+        [Button.inline("➕ Nạp Acc", b"add")]
     ]
-
-# ===== BẢO VỆ – CHỈ MÌNH BẠN DÙNG =====
-def only_admin(e):
-    return e.sender_id == ADMIN_ID
 
 @admin.on(events.NewMessage(pattern="/start"))
 async def start(e):
     if not only_admin(e): return
     await e.respond(
-        f"🤖 BOT ĐẬP HỘP\n"
-        f"📦 Acc: {len(ACCS)}\n"
-        f"🎁 Tổng code: {TOTAL_CODE}",
+        f"🤖 BOT ĐẬP HỘP\nAcc: {len(ACCS)}\nCode: {TOTAL_CODE}",
         buttons=menu()
     )
 
 @admin.on(events.CallbackQuery)
 async def cb(e):
-    if e.sender_id != ADMIN_ID: return
+    if not only_admin(e): return
 
     if e.data == b"acc":
-        txt = "📦 DANH SÁCH ACC\n"
+        t = "📦 ACC:\n"
         for a in ACCS.values():
-            txt += f"- Acc {a['stt']}: {a['name']}\n"
-        await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
+            t += f"- {a['stt']} | {a['name']}\n"
+        await e.edit(t, buttons=[[Button.inline("⬅️ Back", b"back")]])
 
     elif e.data == b"stat":
-        txt = f"📊 THỐNG KÊ\nTổng code: {TOTAL_CODE}\n\n"
+        t = f"🎁 TỔNG CODE: {TOTAL_CODE}\n\n"
         for a in ACCS.values():
             codes = CODES_DB.get(str(a["id"]), [])
-            last = codes[-1] if codes else "Chưa có"
-            txt += f"- Acc {a['stt']}: {len(codes)} | {last}\n"
-        await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
+            t += f"- Acc {a['stt']}: {len(codes)}\n"
+        await e.edit(t, buttons=[[Button.inline("⬅️ Back", b"back")]])
 
     elif e.data == b"add":
         await e.edit("➕ /login <sdt>", buttons=[[Button.inline("⬅️ Back", b"back")]])
 
-    elif e.data == b"test":
-        txt = "🧪 TEST ACC\n"
-        for a in ACCS.values():
-            try:
-                ok = await a["client"].is_user_authorized()
-                txt += f"- Acc {a['stt']}: {'OK' if ok else 'OFF'}\n"
-            except:
-                txt += f"- Acc {a['stt']}: LỖI\n"
-        await e.edit(txt, buttons=[[Button.inline("⬅️ Back", b"back")]])
-
     elif e.data == b"back":
-        await e.edit("🤖 MENU", buttons=menu())
+        await e.edit("MENU", buttons=menu())
 
-# ===== LOGIN ACC =====
+# ===== LOGIN =====
 @admin.on(events.NewMessage(pattern="/login"))
 async def login(e):
     if not only_admin(e): return
-    try:
-        phone = "".join(filter(str.isdigit, e.text))
-        c = TelegramClient(StringSession(), API_ID, API_HASH)
-        await c.connect()
-        sent = await c.send_code_request(phone)
-        PENDING_LOGIN[e.sender_id] = {"c": c, "p": phone, "h": sent.phone_code_hash}
-        await e.respond("📩 Nhập /otp <mã>")
-    except:
-        await e.respond("❌ Sai định dạng")
+    phone = "".join(filter(str.isdigit, e.text))
+    c = TelegramClient(StringSession(), API_ID, API_HASH)
+    await c.connect()
+    sent = await c.send_code_request(phone)
+    PENDING_LOGIN[e.sender_id] = {"c": c, "p": phone, "h": sent.phone_code_hash}
+    await e.respond("📩 Nhập /otp <mã>")
 
 @admin.on(events.NewMessage(pattern="/otp"))
 async def otp(e):
     if not only_admin(e): return
-    data = PENDING_LOGIN.get(e.sender_id)
-    if not data: return
-    try:
-        code = "".join(filter(str.isdigit, e.text))
-        await data["c"].sign_in(data["p"], code, phone_code_hash=data["h"])
-        save_session(data["c"].session.save())
-        me = await data["c"].get_me()
+    d = PENDING_LOGIN.get(e.sender_id)
+    if not d: return
 
-        stt = len(ACCS) + 1
-        ACCS[me.id] = {
-            "id": me.id,
-            "stt": stt,
-            "client": data["c"],
-            "name": me.first_name,
-            "last": None
-        }
-        asyncio.create_task(grab_loop(ACCS[me.id]))
-        await e.respond(f"✅ Acc {stt} OK")
-        del PENDING_LOGIN[e.sender_id]
-    except Exception as ex:
-        await e.respond(f"❌ Lỗi {ex}")
+    code = "".join(filter(str.isdigit, e.text))
+    await d["c"].sign_in(d["p"], code, phone_code_hash=d["h"])
+    save_session(d["c"].session.save())
 
-# ===== ĐẬP HỘP – BOT GỬI CODE CHO BẠN =====
-async def grab_loop(acc):
+    me = await d["c"].get_me()
+    acc = {
+        "id": me.id,
+        "stt": len(ACCS) + 1,
+        "client": d["c"],
+        "name": me.first_name,
+        "last": None
+    }
+    ACCS[me.id] = acc
+    setup_grabber(acc)
+
+    await e.respond("✅ Acc OK")
+    del PENDING_LOGIN[e.sender_id]
+
+# ===== ĐẬP HỘP – FIX CHUẨN =====
+def setup_grabber(acc):
     client = acc["client"]
 
     @client.on(events.NewMessage(chats=BOT_GAME))
     async def handler(ev):
-        if not ev.reply_markup: return
-        btn = next((b for r in ev.reply_markup.rows for b in r.buttons
-                    if any(x in b.text.lower() for x in ["đập","hộp"])), None)
-        if not btn: return
+        if not ev.reply_markup:
+            return
 
-        await asyncio.sleep(random.uniform(0.1, 0.4))
+        btn = None
+        for r in ev.reply_markup.rows:
+            for b in r.buttons:
+                if b.text and any(x in b.text.lower() for x in ["đập", "hộp"]):
+                    btn = b
+                    break
+        if not btn:
+            return
+
+        await asyncio.sleep(random.uniform(0.2, 0.5))
         await ev.click()
-        await asyncio.sleep(2.5)
+        await asyncio.sleep(2)
 
         msgs = await client.get_messages(BOT_GAME, limit=1)
-        if not msgs or not msgs[0].message: return
+        if not msgs or not msgs[0].message:
+            return
 
-        m = re.search(r'là:\s*([A-Z0-9]+)', msgs[0].message)
-        if not m: return
+        m = re.search(r"([A-Z0-9]{6,})", msgs[0].message)
+        if not m:
+            return
 
-        gift_code = m.group(1)
-        if gift_code == acc.get("last"): return
-        acc["last"] = gift_code
-
+        code = m.group(1)
         uid = str(acc["id"])
         CODES_DB.setdefault(uid, [])
-        if gift_code in CODES_DB[uid]: return
+        if code in CODES_DB[uid]:
+            return
 
-        CODES_DB[uid].append(gift_code)
+        CODES_DB[uid].append(code)
         save_codes()
 
         global TOTAL_CODE
         TOTAL_CODE += 1
 
-        msg = (
-            f"🎁 CODE MỚI\n"
-            f"Acc {acc['stt']} ({acc['name']})\n"
-            f"Code: {gift_code}"
+        await admin.send_message(
+            ADMIN_ID,
+            f"🎁 CODE MỚI\nAcc {acc['stt']} ({acc['name']})\nCode: {code}"
         )
-        await admin.send_message(ADMIN_ID, msg)
 
 # ===== MAIN =====
 async def main():
@@ -195,16 +182,16 @@ async def main():
                 await c.connect()
                 if await c.is_user_authorized():
                     me = await c.get_me()
-                    ACCS[me.id] = {
+                    acc = {
                         "id": me.id,
                         "stt": i,
                         "client": c,
                         "name": me.first_name,
                         "last": None
                     }
-                    asyncio.create_task(grab_loop(ACCS[me.id]))
+                    ACCS[me.id] = acc
+                    setup_grabber(acc)
 
     await admin.run_until_disconnected()
 
-if __name__ == "__main__":
-    asyncio.run(main())
+asyncio.run(main())
