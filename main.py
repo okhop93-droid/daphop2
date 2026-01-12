@@ -13,7 +13,7 @@ BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 BOT_GAME = "xocdia88_bot_uytin_bot"
 SESSION_FILE = "sessions.txt"
 CODES_FILE = "codes.json"
-LOG_GROUP = -1001234567890  # Thay ID nhóm của bạn vào đây
+LOG_GROUP = -1001234567890  # <--- THAY ID NHÓM Ở ẢNH 2 VÀO ĐÂY
 
 # ===== KEEP ALIVE =====
 app = Flask(__name__)
@@ -43,7 +43,7 @@ async def notify_admin(msg):
         await admin.send_message(admin.me.id, msg)
     except: pass
 
-# ===== LUỒNG ĐẬP HỘP (TỰ GỬI VÀO NHÓM) =====
+# ===== LUỒNG ĐẬP HỘP (BÁO CÁO CHUẨN ẢNH 2) =====
 async def grab_loop(acc):
     global TOTAL_CODE
     client = acc["client"]
@@ -59,24 +59,27 @@ async def grab_loop(acc):
         try:
             await asyncio.sleep(random.uniform(0.1, 0.4))
             await ev.click()
-            await asyncio.sleep(2) # Chờ bot game trả mã
+            await asyncio.sleep(2.5) # Chờ bot game trả mã
 
             msgs = await client.get_messages(BOT_GAME, limit=1)
             if msgs and msgs[0].message:
                 raw_text = msgs[0].message
-                # Regex lấy mã sau chữ "là:"
+                # Regex lấy mã chuẩn sau chữ "là:"
                 match = re.search(r'là:\s*([A-Z0-9]+)', raw_text)
                 
                 if match:
                     gift_code = match.group(1)
+                    # Chống gửi trùng mã cũ
                     if gift_code != acc.get("last"):
                         acc["last"] = gift_code
                         TOTAL_CODE += 1
                         
-                        # --- TỰ GỬI VÀO NHÓM ---
+                        # --- GỬI THÔNG BÁO VÀO NHÓM ĐÚNG ĐỊNH DẠNG ẢNH 2 ---
                         if LOG_GROUP:
-                            msg_nhom = f"🎁 **Tài khoản {acc['stt']}** húp được: `{gift_code}`"
-                            try: await client.send_message(LOG_GROUP, msg_nhom)
+                            # 💌 Acc X (Tên): CODE
+                            msg_nhom = f"💌 Acc {acc['stt']} ({acc['name']}):\n`{gift_code}`"
+                            try:
+                                await client.send_message(LOG_GROUP, msg_nhom)
                             except: pass
                         
                         CODES_DB[str(acc["id"])] = gift_code
@@ -117,7 +120,7 @@ async def cb(e):
 
     elif e.data == b"test":
         await e.edit("🧪 **ĐANG KIỂM TRA...**")
-        res = "🧪 **KẾT QUẢ:**\n"
+        res = "🧪 **KẾT QUẢ KIỂM TRA:**\n"
         for a in ACCS.values():
             try:
                 if await a['client'].is_user_authorized(): a['status'] = "ONLINE 🟢"
@@ -158,7 +161,7 @@ async def otp_handler(e):
             "name": me.first_name, "status": "ONLINE 🟢", "last": None
         }
         asyncio.create_task(grab_loop(ACCS[me.id]))
-        await e.respond(f"✅ **Thành công!** Tài khoản {new_stt} đang hoạt động.")
+        await e.respond(f"✅ **Thành công!** Tài khoản {new_stt} ({me.first_name}) đang hoạt động.")
         del PENDING_LOGIN[e.sender_id]
     except Exception as ex: await e.respond(f"❌ Lỗi: {ex}")
 
@@ -192,4 +195,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+        
