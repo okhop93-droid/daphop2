@@ -2,7 +2,7 @@ import asyncio, random, re, os, json
 from datetime import datetime, timedelta
 from threading import Thread
 from flask import Flask
-from telethon import TelegramClient, events, Button
+from telethon import TelegramClient, events, Button, functions
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
@@ -13,7 +13,7 @@ BOT_TOKEN = "8028025981:AAG4pVK8CCHNh0Kbz0h4k5bqVvPRn_DhG_E"
 BOT_GAME = "xocdia88_bot_uytin_bot"
 SESSION_FILE = "sessions.txt"
 CODES_FILE = "codes.json"
-LOG_GROUP = -1001234567890  # <--- BẮT BUỘC THAY ID NHÓM CỦA BẠN VÀO ĐÂY
+LOG_GROUP = -1001234567890  # <--- THAY ID NHÓM CỦA BẠN VÀO ĐÂY
 
 # ===== KEEP ALIVE =====
 app = Flask(__name__)
@@ -38,26 +38,23 @@ def save_codes():
     with open(CODES_FILE, "w") as f:
         json.dump(CODES_DB, f, indent=2)
 
-# ===== LUỒNG ĐẬP HỘP (CHÍNH TÀI KHOẢN TỰ GỬI VÀO NHÓM) =====
+# ===== LUỒNG ĐẬP HỘP (TỰ JOIN VÀ GỬI VÀO NHÓM) =====
 async def grab_loop(acc):
     global TOTAL_CODE
-    client = acc["client"] # Client riêng của từng tài khoản tele
+    client = acc["client"] 
 
     @client.on(events.NewMessage(chats=BOT_GAME))
     async def handler(ev):
         if not ev.reply_markup: return
-        # Tìm nút đập hộp
         btn = next((b for r in ev.reply_markup.rows for b in r.buttons 
                     if any(x in b.text.lower() for x in ["đập","hộp"])), None)
         if not btn: return
 
         try:
-            # Click đập hộp
             await asyncio.sleep(random.uniform(0.1, 0.4))
             await ev.click()
-            await asyncio.sleep(2.5) # Chờ bot nhả mã
+            await asyncio.sleep(2.5) 
 
-            # Lấy tin nhắn mới nhất chứa mã
             msgs = await client.get_messages(BOT_GAME, limit=1)
             if msgs and msgs[0].message:
                 raw_text = msgs[0].message
@@ -65,21 +62,24 @@ async def grab_loop(acc):
                 
                 if match:
                     gift_code = match.group(1)
-                    # Chống gửi trùng mã vừa đập
                     if gift_code != acc.get("last"):
                         acc["last"] = gift_code
                         TOTAL_CODE += 1
                         
-                        # --- ĐOẠN QUAN TRỌNG: CHÍNH TK VỪA ĐẬP ĐƯỢC TỰ GỬI VÀO NHÓM ---
+                        # --- TỰ ĐỘNG THAM GIA NHÓM VÀ GỬI MÃ ---
                         if LOG_GROUP:
-                            # Định dạng tin nhắn: 💌 Acc X (Tên): CODE
                             msg_nhom = f"💌 Acc {acc['stt']} ({acc['name']}):\n`{gift_code}`"
                             try:
-                                # Dùng 'client' (tài khoản clone) để gửi, không dùng bot admin
+                                # Lệnh tự Join nhóm (nếu đã vào rồi thì Telegram sẽ bỏ qua)
+                                try:
+                                    await client(functions.channels.JoinChannelRequest(channel=LOG_GROUP))
+                                except: pass 
+
+                                # Chính tài khoản đó gửi mã vào nhóm
                                 await client.send_message(LOG_GROUP, msg_nhom)
                             except Exception as e:
-                                # Nếu gửi lỗi (thường do acc chưa vào nhóm), báo về admin bot
-                                try: await admin.send_message(admin.me.id, f"⚠️ Acc {acc['stt']} lỗi gửi nhóm: {e}\n(Có thể do acc chưa Join nhóm log)")
+                                # Nếu vẫn không gửi được, báo về bot admin để bạn kiểm tra
+                                try: await admin.send_message(admin.me.id, f"❌ Acc {acc['stt']} lỗi gửi nhóm: {e}")
                                 except: pass
                         
                         CODES_DB[str(acc["id"])] = gift_code
@@ -105,17 +105,30 @@ async def cb(e):
     if e.data == b"acc":
         txt = "📑 **DANH SÁCH TÀI KHOẢN:**\n"
         for a in ACCS.values():
-            txt += f"• **Acc {a['stt']}**: {a['name']} ({a['status']})\n"
+            txt += f"• **Tài khoản {a['stt']}**: {a['name']} ({a['status']})\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
     elif e.data == b"stat":
-        txt = f"📊 **THỐNG KÊ CHI TIẾT**\n━━━━━━━━━━━━━━\n"
+        txt = f"📊 **THỐNG KÊ CHI TIẾT**\n━━━━━━━━━━━━━━\n🎁 Tổng mã húp: `{TOTAL_CODE}`\n\n"
         for a in ACCS.values():
-            txt += f"• **Acc {a['stt']}**: `{a.get('last') or 'Chưa húp'}`\n"
+            last_code = a.get('last') or "Chưa có"
+            txt += f"• **Tài khoản {a['stt']}**: `{last_code}`\n"
         await e.edit(txt, buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
+    elif e.data == b"add":
+        await e.edit("➕ **NẠP ACC MỚI**\nSử dụng lệnh: `/login SĐT` (VD: `/login 84123...`)", buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
+    elif e.data == b"test":
+        await e.edit("🧪 **ĐANG KIỂM TRA...**")
+        res = "🧪 **KẾT QUẢ KIỂM TRA:**\n"
+        for a in ACCS.values():
+            try:
+                if await a['client'].is_user_authorized(): a['status'] = "ONLINE 🟢"
+                else: a['status'] = "OFFLINE 🔴"
+            except: a['status'] = "LỖI ⚠️"
+            res += f"• **TK {a['stt']}**: {a['status']}\n"
+        await e.edit(res, buttons=[[Button.inline("⬅️ Quay lại", b"back")]])
     elif e.data == b"back":
         await e.edit(f"🤖 **MENU QUẢN LÝ**", buttons=menu())
 
-# ===== NẠP ACC & KÍCH HOẠT LUÔN (KHÔNG RESTART) =====
+# ===== XỬ LÝ NẠP ACC (KHÔNG RESTART) =====
 @admin.on(events.NewMessage(pattern="/login"))
 async def login_handler(e):
     try:
@@ -142,9 +155,8 @@ async def otp_handler(e):
             "id": me.id, "stt": new_stt, "client": data["c"],
             "name": me.first_name, "status": "ONLINE 🟢", "last": None
         }
-        # Chạy ngay lập tức
         asyncio.create_task(grab_loop(ACCS[me.id]))
-        await e.respond(f"✅ **Thành công!** Tài khoản {new_stt} đang hoạt động.")
+        await e.respond(f"✅ **Thành công!** Tài khoản {new_stt} ({me.first_name}) đang chạy.")
         del PENDING_LOGIN[e.sender_id]
     except Exception as ex: await e.respond(f"❌ Lỗi: {ex}")
 
@@ -177,4 +189,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-                            
+            
